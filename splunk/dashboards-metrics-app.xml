@@ -1,0 +1,172 @@
+<form version="1" theme="dark">
+  <label>Langfuse App Metrics Observability</label>
+  <description>Actionable app-level views from OpenTelemetry → Splunk (index=lf_metrics). Fixes applied for numeric casting and safe division.</description>
+  <fieldset submitButton="false">
+    <input type="time" token="time">
+      <label>Time range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="multiselect" token="tok_hosts" searchWhenChanged="true">
+      <label>Host(s)</label>
+      <choice value="*">All hosts</choice>
+      <default>*</default>
+      <delimiter>,</delimiter>
+      <search>
+        <query>
+          | mstats count WHERE index=lf_metrics BY host
+          | stats count BY host
+          | sort host
+        </query>
+        <earliest>$time.earliest$</earliest>
+        <latest>$time.latest$</latest>
+      </search>
+      <fieldForLabel>host</fieldForLabel>
+      <fieldForValue>host</fieldForValue>
+    </input>
+    <input type="dropdown" token="tok_span" searchWhenChanged="true">
+      <label>Time bucket</label>
+      <choice value="1m">1 minute</choice>
+      <choice value="5m">5 minutes</choice>
+      <choice value="15m">15 minutes</choice>
+      <default>1m</default>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <title>Requests per Second (by route)</title>
+      <chart>
+        <search>
+          <query>| mstats sum("http.server.request.count") AS reqs WHERE index=lf_metrics AND host IN ($tok_hosts$) BY host, http.route span=$tok_span$
+| eval rps=round(reqs/60,2)
+| rename host AS Host http.route AS Route
+| fields _time Host Route rps</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Average Latency (ms by route)</title>
+      <chart>
+        <search>
+          <query>
+            | mstats
+                sum("http.server.request.duration_sum")   AS dur_sum,
+                sum("http.server.request.duration_count") AS dur_cnt
+              WHERE index=lf_metrics AND host IN ($tok_hosts$)
+              BY host, http.route span=$tok_span$
+            | eval avg_ms=round(dur_sum/dur_cnt,2)
+            | rename host AS Host http.route AS Route
+            | fields _time Host Route avg_ms
+          </query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.axisTitleY.text">ms</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Active In-Flight Requests (gauge per host)</title>
+      <single>
+        <search>
+          <query>
+            | mstats avg("http.server.active_requests") AS active
+              WHERE index=lf_metrics AND host IN ($tok_hosts$)
+              BY host span=$tok_span$
+            | stats latest(active) AS active BY host
+            | rename host AS Host
+          </query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x53A051","0xF2B827","0xD93F3C"]</option>
+        <option name="rangeValues">[1,5]</option>
+        <option name="unit">reqs</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Error Rate % (5xx per host)</title>
+      <chart>
+        <search>
+          <query>| mstats sum("http.server.request.count") AS reqs WHERE index=lf_metrics AND host IN ($tok_hosts$) BY host, http.status_code span=$tok_span$
+| eval sc=tonumber(http.status_code)
+| eval errs=if(sc&gt;=500, reqs, 0)
+| stats sum(reqs) AS total sum(errs) AS errors BY _time host
+| eval error_rate_pct=round(100*errors/total,2)
+| rename host AS Host
+| fields _time Host error_rate_pct total errors</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.axisTitleY.text">% errors</option>
+        <option name="charting.chart">column</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>LLM Tokens per Minute (by model &amp; token type)</title>
+      <chart>
+        <search>
+          <query>| mstats sum("llm.tokens") AS tokens WHERE index=lf_metrics AND host IN ($tok_hosts$) BY host, llm.model, llm.token_type span=$tok_span$
+| rename host AS Host llm.model AS Model llm.token_type AS TokenType
+| fields _time Host Model TokenType tokens</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Tokens per Request (all types)</title>
+      <chart>
+        <search>
+          <query>| mstats sum("llm.tokens") AS tokens, sum("http.server.request.count") AS reqs
+WHERE index=lf_metrics AND host IN ($tok_hosts$) BY host span=$tok_span$
+| eval tokens_per_req=if(reqs&gt;0, round(tokens/reqs,2), null())
+| rename host AS Host
+| fields _time Host tokens_per_req tokens reqs</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.axisTitleY.text">tokens/req</option>
+        <option name="charting.chart">line</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Status Class Mix (2xx / 4xx / 5xx)</title>
+      <chart>
+        <search>
+          <query>| mstats sum("http.server.request.count") AS reqs WHERE index=lf_metrics AND host IN (*) BY host, http.status_code span=1m
+| eval sc=tonumber(http.status_code)
+| eval status_class = tostring(floor(sc/100)*100) . "xx"
+| stats sum(reqs) AS class_reqs BY _time host status_class
+| eventstats sum(class_reqs) AS total BY _time host
+| eval pct=round(100*class_reqs/total,2)
+| rename host AS Host
+| fields _time Host status_class pct</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.axisTitleY.text">% share</option>
+        <option name="charting.chart">area</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+</form>

@@ -1,0 +1,38 @@
+### ✅ Success Cases (200 responses)
+
+# Basic math
+curl -X POST http://54.226.207.13:8080/askquestion \
+  -H "Content-Type: application/json" \
+  -d '{"userType": "tester", "question": "What is 2 + 9?"}'
+
+# Science (simple explanation)
+curl -X POST http://54.226.207.13:8080/askquestion \
+  -H "Content-Type: application/json" \
+  -d '{"userType": "student", "question": "Explain gravity in simple terms."}'
+
+# History / research
+curl -X POST http://54.226.207.13:8080/askquestion \
+  -H "Content-Type: application/json" \
+  -d '{"userType": "researcher", "question": "Give me a short history of the internet."}'
+
+# Creative generation (longer output, checks latency/trace)
+curl -X POST http://54.226.207.13:8080/askquestion \
+  -H "Content-Type: application/json" \
+  -d '{"userType": "writer", "question": "Write me a short poem about the stars in the style of Shakespeare."}'
+
+### ⚠️ Error / Edge Cases
+
+# 400 Bad Request (missing question field)
+curl -X POST http://54.226.207.13:8080/askquestion \
+  -H "Content-Type: application/json" \
+  -d '{"userType": "tester"}'
+
+# 500 Server Error (malformed JSON)
+curl -X POST http://54.226.207.13:8080/askquestion \
+  -H "Content-Type: application/json" \
+  -d '{"userType": "tester", "question": "Hello" '
+
+# Stress test (very long input for latency & cost trace)
+curl -X POST http://54.226.207.13:8080/askquestion \
+  -H "Content-Type: application/json" \
+  -d '{"userType": "researcher", "question": "Explain quantum mechanics in detail using analogies for each concept, covering wave-particle duality, uncertainty principle, entanglement, quantum tunneling, and measurement problem, as if I am a beginner with no background in physics."}'

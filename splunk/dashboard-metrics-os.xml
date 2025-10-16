@@ -1,0 +1,138 @@
+<form version="1" theme="dark">
+  <label>Langfuse OS Metrics Observability</label>
+  <description>OS-level metrics collected via OpenTelemetry hostmetrics → Splunk (index=lf_metrics).</description>
+  <fieldset submitButton="false">
+    <input type="time" token="time">
+      <label>Time range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="multiselect" token="tok_hosts" searchWhenChanged="true">
+      <label>Host(s)</label>
+      <choice value="*">All hosts</choice>
+      <default>*</default>
+      <delimiter>,</delimiter>
+      <search>
+        <query>
+          | mstats count WHERE index=lf_metrics BY host 
+          | stats count BY host 
+          | sort host
+        </query>
+        <earliest>$time.earliest$</earliest>
+        <latest>$time.latest$</latest>
+      </search>
+      <fieldForLabel>host</fieldForLabel>
+      <fieldForValue>host</fieldForValue>
+    </input>
+    <input type="dropdown" token="tok_span" searchWhenChanged="true">
+      <label>Time bucket</label>
+      <choice value="1m">1 minute</choice>
+      <choice value="5m">5 minutes</choice>
+      <choice value="15m">15 minutes</choice>
+      <default>1m</default>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <title>CPU Load Avg (compare to core count on host)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("system.cpu.load_average.1m") AS load_1m, avg("system.cpu.load_average.5m") AS load_5m, avg("system.cpu.load_average.15m") AS load_15m
+WHERE index=lf_metrics AND host IN ($tok_hosts$) BY host span=$tok_span$
+| rename host AS Host
+| fields _time Host load_1m load_5m load_15m</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Processes Count</title>
+      <chart>
+        <search>
+          <query>| mstats avg("system.processes.count") AS proc_count WHERE index=lf_metrics AND host IN ($tok_hosts$) BY host span=$tok_span$
+| rename host AS Host</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Memory Usage (bytes → GiB)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("system.memory.usage") AS mem_bytes
+  WHERE index=lf_metrics AND host IN ($tok_hosts$)
+  BY host span=$tok_span$
+| eval mem_GiB = round(mem_bytes/1024/1024/1024, 2)
+| rename host AS Host
+| fields _time Host mem_GiB</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.axisTitleY.text">GiB</option>
+        <option name="charting.chart">line</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Filesystem Usage (fraction 0-1 by device)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("system.filesystem.usage") AS fs_usage
+  WHERE index=lf_metrics AND host IN ($tok_hosts$)
+  BY host, device span=$tok_span$
+| eval fs_GiB = round(fs_usage/1024/1024/1024, 2)
+| rename host AS Host device AS Device
+| fields _time Host Device fs_GiB</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.axisTitleY.text">Fraction used (0–1)</option>
+        <option name="charting.chart">area</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Network I/O (bytes over bucket, by direction)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("system.network.io") AS net_bytes
+  WHERE index=lf_metrics AND host IN ($tok_hosts$)
+  BY host, direction span=$tok_span$
+| eval net_MB = round(net_bytes/1024/1024, 2)
+| rename host AS Host direction AS Direction
+| fields _time Host Direction net_MB</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.axisTitleY.text">Bytes / bucket</option>
+        <option name="charting.chart">column</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <html>
+        <p style="font-size:12px;color:#888;margin-top:10px;">
+          Notes:
+          <br/>• CPU load is not a percentage. Compare load to the CPU core count (e.g., 16 = fully utilized on 16 cores).
+          <br/>• Memory shown is reported bytes converted to GiB.
+          <br/>• Filesystem usage here is exported as a fraction (0–1). If your exporter later switches to bytes, adjust the panel math.
+          <br/>• Network I/O is average bytes observed per time bucket (span).
+        </p>
+      </html>
+    </panel>
+  </row>
+</form>

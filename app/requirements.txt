@@ -1,0 +1,7 @@
+flask
+openai
+langfuse
+opentelemetry.instrumentation
+opentelemetry.instrumentation.flask
+opentelemetry.instrumentation.requests
+opentelemetry.exporter.otlp.proto.grpc

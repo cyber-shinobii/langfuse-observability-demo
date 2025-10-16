@@ -1,0 +1,240 @@
+<form version="1" theme="dark">
+  <label>Langfuse Trace Observability</label>
+  <description>Cost, usage, latency, and errors from Langfuse-mirrored OpenTelemetry events in Splunk.</description>
+  <init>
+    <set token="idx">main</set>
+    <set token="stype">langfuse:trace</set>
+  </init>
+  <fieldset submitButton="false">
+    <input type="time" token="time" searchWhenChanged="true">
+      <label>Time range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="text" token="idx" searchWhenChanged="true">
+      <label>Index</label>
+      <default>main</default>
+    </input>
+    <input type="text" token="stype" searchWhenChanged="true">
+      <label>Sourcetype</label>
+      <default>otel:trace</default>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <single>
+        <title>Total Cost (USD)</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$"
+(name="openai.chat.completions.create" OR name="OpenAI-generation")
+| eval input=tonumber('attributes.llm.cost.input_usd'),
+       output=tonumber('attributes.llm.cost.output_usd'),
+       total=tonumber('attributes.llm.cost.usd')
+| stats sum(input) as cost_input_usd sum(output) as cost_output_usd sum(total) as cost_total_usd</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.0000</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="unit">$</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Total Tokens</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$"
+(name="openai.chat.completions.create" OR name="OpenAI-generation")
+| eval tokens=tonumber('attributes.llm.usage.total_tokens')
+| stats sum(tokens) as total_tokens</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Requests</title>
+        <search>
+          <query>
+            index=$idx$ sourcetype="$stype$"
+            name="POST /askquestion"
+            | stats count AS requests
+          </query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Cost over time</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$"
+(name="openai.chat.completions.create" OR name="OpenAI-generation")
+| eval cost=tonumber('attributes.llm.cost.usd')
+| timechart span=5m sum(cost) as cost_usd</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.chart">area</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <title>Latency percentiles (ms)</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$"
+| eval lat=tonumber('attributes.latency_ms')
+| where isnotnull(lat)
+| timechart span=5m p50(lat) as p50_ms p95(lat) as p95_ms</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Top users by total cost</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$"
+(name="openai.chat.completions.create" OR name="OpenAI-generation")
+| eval user=coalesce('attributes.lf.user_id','attributes.user.id',"anonymous")
+| eval cost=tonumber('attributes.llm.cost.usd')
+| eval tokens=tonumber('attributes.llm.usage.total_tokens')
+| stats sum(cost) AS cost_usd sum(tokens) AS tokens count AS calls BY user
+| sort - cost_usd
+| head 15</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.axisY.abbreviation">auto</option>
+        <option name="charting.chart">bar</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <title>Cost by model</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$"
+(name="openai.chat.completions.create" OR name="OpenAI-generation")
+| eval model='attributes.llm.model'
+| eval cost=tonumber('attributes.llm.cost.usd')
+| eval tokens=tonumber('attributes.llm.usage.total_tokens')
+| stats sum(cost) AS cost_usd sum(tokens) AS tokens count AS calls BY model
+| sort - cost_usd</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Errors by status / type</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$"
+| spath
+| eval http_status=coalesce('attributes.http.status_code','attributes.langfuse.observation.metadata.http_status')
+| eval status=coalesce('attributes.error.type','attributes.langfuse.observation.metadata.status')
+| eval lf_trace_out = 'attributes.langfuse.trace.output'
+| eval lf_obs_out   = 'attributes.langfuse.observation.output'
+| eval lf_trace_json = if(isnull(lf_trace_out) OR lf_trace_out="","{}", lf_trace_out)
+| eval lf_obs_json   = if(isnull(lf_obs_out)   OR lf_obs_out="",  "{}", lf_obs_out)
+| spath input=lf_trace_json output=err_from_trace path=error
+| spath input=lf_trace_json output=detail_from_trace path=detail
+| spath input=lf_obs_json   output=err_from_obs   path=error
+| spath input=lf_obs_json   output=detail_from_obs path=detail
+| eval error_text = coalesce('attributes.error.message', detail_from_trace, detail_from_obs, err_from_trace, err_from_obs, status)
+| where isnotnull(error_text) AND (http_status&gt;=400 OR like(status,"%error%") OR status="bad_request" OR error_text!="ok")
+| dedup trace_id error_text
+| stats count by _time error_text attributes.lf.request_id trace_id span_id name http_status status
+| sort - _time</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Tokens vs Latency</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$" (name="openai.chat.completions.create" OR name="ask_question_request")
+| spath
+| eval trace=trace_id
+| eval tokens=if(name="openai.chat.completions.create", coalesce('attributes.llm.usage.total_tokens','attributes.langfuse.observation.metadata.llm.usage.total_tokens'), null())
+| eval lat_ms=if(name="ask_question_request", coalesce('attributes.latency_ms','attributes.langfuse.observation.metadata.latency_ms'), null())
+| stats earliest(_time) as _time values(tokens) as tokens values(lat_ms) as lat_ms by trace
+| where isnotnull(tokens) AND isnotnull(lat_ms)
+| eval tokens=tonumber(tokens), lat_ms=tonumber(lat_ms)
+| table _time tokens lat_ms</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="charting.chart">scatter</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Recent requests (question, answer excerpt, tokens, cost)</title>
+        <search>
+          <query>index=$idx$ sourcetype="$stype$"
+| spath
+| eval user=coalesce('attributes.lf.user_id','attributes.user.id',"anonymous")
+| eval session=coalesce('attributes.lf.session_id','attributes.session.id')
+| eval model=coalesce('attributes.llm.model','attributes.langfuse.observation.model.name')
+| eval tokens=coalesce('attributes.llm.usage.total_tokens','attributes.langfuse.observation.metadata.llm.usage.total_tokens')
+| eval cost=coalesce('attributes.llm.cost.usd','attributes.langfuse.observation.metadata.llm.cost.usd')
+| eval lat=coalesce('attributes.latency_ms','attributes.langfuse.observation.metadata.latency_ms')
+
+| eval qblob=coalesce('attributes.llm.input.question','attributes.langfuse.trace.input','attributes.langfuse.observation.input')
+| rex field=qblob max_match=1 "(?i)question['\"]\s*:\s*['\"](?&lt;q_from_kv&gt;[^\"']+)"
+| rex field=qblob max_match=1 "(?i)role['\"]\s*:\s*['\"]user['\"][^\\]*?content['\"]\s*:\s*['\"](?&lt;q_from_user&gt;[^\"']+)"
+| eval question=coalesce('attributes.llm.input.question', q_from_kv, q_from_user)
+
+| eval ablob=coalesce('attributes.llm.output.excerpt','attributes.langfuse.observation.output','attributes.langfuse.trace.output')
+| rex field=ablob max_match=1 "(?i)answer['\"]\s*:\s*['\"](?&lt;ans_from_answer&gt;[^\"']+)"
+| rex field=ablob max_match=1 "(?i)content['\"]\s*:\s*['\"](?&lt;ans_from_content&gt;[^\"']+)"
+| eval answer_excerpt=coalesce('attributes.llm.output.excerpt', ans_from_answer, ans_from_content)
+
+| where isnotnull(question) OR isnotnull(answer_excerpt)
+| search question="*"
+| fillnull
+| stats count by _time user session model tokens cost lat question answer_excerpt
+| sort - _time
+| head 5</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+        </search>
+        <option name="count">15</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+</form>
